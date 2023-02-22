@@ -1,0 +1,252 @@
+---
+title: "PS2"
+author: "Chen-Yen Liu, Yu-Zhu Liu, Zi-yue Wang"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+## Question 1 
+
+```{r , echo=FALSE, include=FALSE, warning=FALSE}
+data(SaratogaHouses)
+library(tidyverse)
+library(ggplot2)
+library(rsample)  
+library(caret)
+library(modelr)
+library(parallel)
+library(foreach)
+library(mosaic)
+library(class)
+library(lattice)
+set.seed(123)
+
+# Fit the full model 
+saratoga_split = initial_split(SaratogaHouses, prop = 0.8)
+saratoga_train = training(saratoga_split)
+saratoga_test = testing(saratoga_split)
+full.model <- lm(price ~., data = saratoga_train)
+# Stepwise regression model
+step.model <- step(full.model, direction = c("both"))
+step.model = lm(price ~ lotSize + age + landValue + livingArea + bedrooms + bathrooms + rooms  + 
+                  heating + waterfront + newConstruction + centralAir, data = saratoga_train)
+lm_medium = lm(price ~ lotSize + age + livingArea + pctCollege + bedrooms + 
+                 fireplaces + bathrooms + rooms + heating + fuel + centralAir, data= saratoga_train)
+
+#get simulated RSME
+rmse_lm = foreach(i = c(1:20), .combine='rbind') %do% {
+  
+  #split the data
+  saratoga_split = initial_split(SaratogaHouses, prop = 0.8)
+  saratoga_train = training(saratoga_split)
+  saratoga_test = testing(saratoga_split)
+  
+  lm_medium = lm(price ~ lotSize + age + livingArea + pctCollege + bedrooms + 
+                   fireplaces + bathrooms + rooms + heating + fuel + centralAir, data= saratoga_train)
+  
+  step.model = lm(price ~ lotSize + age + landValue + livingArea + bedrooms + bathrooms + rooms  + 
+                    heating + waterfront + newConstruction + centralAir, data = saratoga_train)
+  
+  c(rmse(lm_medium, saratoga_test), rmse(step.model, saratoga_test))
+ 
+} %>% as.data.frame
+
+rmse_lm_medium = mean(rmse_lm$V1)
+rmse_lm_medium
+rmse_lm_step = mean(rmse_lm$V2)
+rmse_lm_step
+
+```
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE}
+#KNN MODEL
+rmses_knn = foreach(i = c(1:20), .combine='rbind') %do% {
+  #split the data
+  saratoga_split = initial_split(SaratogaHouses, prop = 0.8)
+  saratoga_train = training(saratoga_split)
+  saratoga_test = testing(saratoga_split)
+  
+  #Normalize
+  
+  Xtrain = model.matrix(~ . - (price +sewer + waterfront + landValue + newConstruction) - 1, data=saratoga_train)
+  Xtest = model.matrix(~ . - (price+ sewer + waterfront + landValue + newConstruction) - 1, data=saratoga_test)
+  
+  # training and testing set responses
+  ytrain = saratoga_train$price
+  ytest = saratoga_test$price
+  
+  #now rescale:
+  scale_train = apply(Xtrain, 2, sd)  # calculate std dev for each column
+  Xtilde_train = scale(Xtrain, scale = scale_train)
+  Xtilde_test = scale(Xtest, scale = scale_train)  # use the training set scales!
+  
+  #run the KNN model
+  ctrl <- trainControl(method="repeatedcv", number = 10, repeats = 3)
+  knnfit <- train(Xtilde_train,
+                   ytrain,
+                   method = "knn",
+                   trControl = ctrl,
+                   tunelenth = 10)
+  #knnfit
+  
+  y_predict <- predict(knnfit, Xtilde_test)
+  
+  
+  c(RMSE(ytest, y_predict))
+  
+}
+rmse_knn = mean(rmses_knn)
+rmse_knn
+```
+The linear model which outperformed the medium linear model is: price = lotSize + age + landValue + livingArea + bedrooms + bathrooms + rooms  + heating + waterfront + newConstruction + centralAir  which was found using Stepwise regression.
+
+To get the RMSE, I ran 20 times with randomly spilt samples for each model, we found that the linear medium model had an RMSE of 65627.990 and our chosen linear model had an RMSE of 58390.23. The KNN model had  a RMSE of 67950.32 which was selected using repeated cross validation and then refit to the testing set. This means our chosen linear model was the best at predicting market values for properties in Saratoga. For a taxing authority it's clear that there are important factors in determining property value compared to the medium model: Land Value, Waterfront Property, and finally whether or not a house was a new construction. 
+
+
+## Question 2
+2. People with poor credit history are much more likely to default than people with good and terrible history. 
+
+x axis is the credit history and y axis is the probability of defalt.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+
+german_credit=read.csv("/Users/yuzhuliu/Desktop/Data Mining/PS2/german_credit.csv")
+
+default_prob = german_credit %>% 
+  group_by(history) %>%
+  summarize(avg_default_prob = mean(Default))
+
+ggplot(default_prob) + 
+  geom_col(aes(x=history,y=avg_default_prob))+
+             ggtitle("Default Probabilty by Credit History")+
+  labs(y = "default probablity", x = "credit history")
+
+```
+History has a negative relationship with default, that means, people with poor and terrible credit history are less likely to be default.
+The result is consistent with what shown in the bar graph. 
+This data set is not appropriate for building a predictive model of defaults, because it contains a high proportion of defaulted data, and reduces the model accuracy.
+My suggestion is to use a random data set that including similar proportion of default and non-default data.
+
+
+## Question 3
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###library and data
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(rsample)  
+library(caret)
+library(modelr)
+library(parallel)
+library(foreach)
+library(lubridate)
+library(gamlr)
+library(foreach)
+
+hotels_val <- read_csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/hotels_val.csv")
+hotels_dev <- read_csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/hotels_dev.csv")
+```
+
+###Model Building
+```{r, echo=FALSE, warning=FALSE}
+##split data
+hotel_dev_split = initial_split(hotels_dev, prop = 0.8)
+hotel_dev_train = training(hotel_dev_split)
+hotel_dev_test = testing(hotel_dev_split)
+# Model Building 
+## baseline 1
+hotel_baseline1 = glm(children ~ market_segment + adults + customer_type + is_repeated_guest, data = hotel_dev_train, family = binomial)
+## baseline 2
+hotel_baseline2 = glm(children ~ .-arrival_date , data = hotel_dev_train, family = binomial)
+
+
+```
+
+Initially, we will divide the data into training and testing sets, and proceed to develop baseline models 1 and 2. Afterward, we aim to optimize the model by evaluating the p-value of each coefficient and investigating interaction terms.
+
+```{r  best model, echo=FALSE, warning=FALSE}
+##best model
+hotel_best = glm(children ~ . - arrival_date + stays_in_weekend_nights:distribution_channel + is_repeated_guest:distribution_channel + adults:is_repeated_guest +  adults:stays_in_weekend_nights + stays_in_weekend_nights:customer_type + customer_type:adults, data = hotel_dev_train, family = binomial)
+# the out of sample performance for model 1 and 2: setting the t as 0.3
+#for model 1
+phat_baseline1 = predict(hotel_baseline1, hotel_dev_test, type = "response")
+yhat_baseline1 = ifelse(phat_baseline1>0.3, 1, 0)
+confusion_baseline1 = table(y = hotel_dev_test$children, yhat = yhat_baseline1)
+#for model 2
+phat_baseline2 = predict(hotel_baseline2, hotel_dev_test, type = "response")
+yhat_baseline2 = ifelse(phat_baseline2>0.3, 1, 0)
+confusion_baseline2 = table(y = hotel_dev_test$children, yhat = yhat_baseline2)
+#for the best model
+phat_best = predict(hotel_best, hotel_dev_test, type = "response")
+yhat_best = ifelse(phat_best>0.3, 1, 0)
+confusion_best = table(y = hotel_dev_test$children, yhat = yhat_best)
+```
+Following the development of the optimal model,  We hand-picked various features and interactions and eventually decided the above model as our final linear model, we construct a confusion matrix to compare its out-of-sample performance with that of other models.
+
+The accuracy scores of baseline1, baseline2, and the best model are provided below. 
+
+```{r output confusion, echo=FALSE}
+confusion_baseline1
+confusion_baseline2
+confusion_best
+round(sum(diag(confusion_baseline1))/sum(confusion_baseline1) * 100, 2)
+round(sum(diag(confusion_baseline2))/sum(confusion_baseline2) * 100, 2)
+round(sum(diag(confusion_best))/sum(confusion_best) * 100, 2)
+```
+
+### Model Validation: Step 1
+Validate our best model by testing on the `hotels_dev` data, and generate the ROC curve of this prediction using threshold of 0.01 to 0.9
+
+```{r Model Validation: Step 1, echo=FALSE, warning=FALSE}
+# validate our best model using the fresh val data
+phat_best_val = predict(hotel_best, hotels_val, type = "response")
+# plot the roc curve
+t = rep(1:90)/100
+roc_plot = foreach(t = t, .combine='rbind')%do%{
+  yhat_best_val = ifelse(phat_best_val >= t, 1, 0)
+  confusion_best_val = table(y=hotels_val$children, yhat=yhat_best_val)
+  TPR = confusion_best_val[2,2]/(confusion_best_val[2,2]+confusion_best_val[2,1])
+  FPR = confusion_best_val[1,2]/(confusion_best_val[1,1]+confusion_best_val[1,2]) 
+  c(t=t, TPR = TPR, FPR = FPR)
+} %>% as.data.frame()
+ggplot(roc_plot) +
+  geom_line(aes(x=FPR, y=TPR)) +
+  labs(y="True Positive Rate", x = "False Positive Rate", title = "ROC Curve for the Best Model")+
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+
+From the plot we can see that the optimal threshold to choose might be around 0.1 ~ 0.2.
+
+
+### Model Validation: Step 2
+
+Perform 20-fold cross-validation on the hotels_dev dataset, where random fold numbers from 1 to 20 are assigned to each data entry using sampling.
+
+For each fold, record the sum of predicted bookings and actual bookings to evaluate the performance of the model.
+
+```{r Model Validation: Step 2, echo=FALSE, warning=FALSE}
+hotel_cv = hotels_val %>%
+  mutate(fold = rep(1:20, length=nrow(hotels_val))%>%sample())
+hotel_cv = foreach(i = 1:20, .combine='rbind')  %do% {
+  hotel_cv_test = filter(hotel_cv, fold == i)
+  hotel_cv_train = filter (hotel_cv, fold != i)
+  hotel_cv_model = glm(children ~ .+ stays_in_weekend_nights:distribution_channel + is_repeated_guest:distribution_channel + adults:is_repeated_guest +  adults:stays_in_weekend_nights + stays_in_weekend_nights:customer_type + customer_type:adults, data = hotel_cv_train[,!colnames(hotel_cv_train)%in% c("arrival_date")], family = binomial)
+  hotel_cv_phat = predict(hotel_cv_model, hotel_cv_test, type = "response")
+  c(y=sum(hotel_cv_test$children), y_hat=sum(hotel_cv_phat), fold =i)
+} %>% as.data.frame()
+plot(hotel_cv$y, hotel_cv$y_hat, main =  "Actual vs. Expected number of bookings With Children",
+     xlab = "Actual number of bookings With Children", ylab = "Predicted number of bookings With Children", xlim = c(10,28),ylim = c(10,28))
+
+hotel_cv <- hotel_cv %>%
+  mutate(diff = abs(y_hat - y)  )
+mean(hotel_cv$diff)
+```
+
+We calculate the difference between actual number of bookings with children and predicted number of bookings with children of each fold, and the mean of these differences is 2.86.  We can see the expected numbers of bookings is only loosely following the actual numbers.
